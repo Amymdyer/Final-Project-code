@@ -1,0 +1,175 @@
+import numpy as np
+%matplotlib widget
+import matplotlib.pyplot as plt
+import astropy.io as astro
+from astropy.io import fits
+import astroquery as query
+import photutils as phot
+from astropy.stats import sigma_clip
+\new cell
+
+#BIAS FRAMES
+import glob #this is used to find all the bias frames with the same temp
+
+allfiles = sorted(glob.glob('bias_-20C_*.fits')) #sorted puts them in order
+biasframes1 = [] 
+for a in allfiles: 
+    with fits.open(a) as hdu:
+        biasframes1.append(hdu[0].data) 
+
+biasframes1 = np.array(biasframes1, dtype=np.float64) #gives biasframes1 the data
+print(biasframes1.shape, 'this is bias shape')
+meanforalldata = np.mean(biasframes1, axis=(1,2)) #this is xbar in sigma clipping
+stdsforalldata = np.std(biasframes1, axis=(1,2)) # this is sigma for sigma clipping
+
+print('mean bias level for -20:', np.mean(meanforalldata))
+print('standard deviation for -20:', np.std(meanforalldata))
+
+
+print("Std of first bias frame:", np.std(biasframes1[0]))
+print("Mean image std:", np.mean(np.std(biasframes1, axis=(1,2))))
+
+#sigma clipping test for -20.C
+
+clipped = sigma_clip(meanforalldata, sigma=3, axis=0)
+clippedmeans = clipped.compressed()  #would remove any image where its mean isnt below 3std
+
+print('sigma clipping bias mean:', clippedmeans)
+print("Rejected frame means:", meanforalldata[clipped.mask])  #seeing if any frame is rejected
+
+#making bias master frame: 
+clipbiases = sigma_clip(biasframes1, sigma=3, axis=0)
+masterbias = np.mean(clipbiases, axis=0)
+
+print("Master bias mean (ADU):", np.mean(masterbias)) 
+print("Master bias std (ADU):", np.std(masterbias, ddof=1))
+
+hdu = fits.PrimaryHDU(masterbias) #creates file for masterbias
+hdu.header['COMMENT'] = 'Master bias frame (-20 C)' #titles it
+hdu.writeto('master_bias_-20C.fits', overwrite=True) #if rerun
+\new cell 
+
+#DARK FRAME 
+darks202 = sorted(glob.glob('dark_-20C_2s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack = []
+for f in darks202:   
+    with fits.open(f) as hdul:
+        darks202 = hdul[0].data.astype(np.float64) #changing to 64bit
+    darkstack.append(darks202 - masterbias)
+
+darkstack = np.array(darkstack) #creating the array
+print('shape of dark: ',darkstack.shape) #checking right shape
+
+dark202clip = sigma_clip(darkstack, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark = np.mean(dark202clip, axis=0).data #creating master dark frame
+
+masterdmean = np.mean(masterdark) 
+masterdstd = np.std(masterdark)
+print('Master dark mean (ADU): ', masterdmean)
+print('Master dark std (ADU): ', masterdstd)
+
+hdu = fits.PrimaryHDU(masterdark) #filinf masterdark
+hdu.header['COMMENT'] = 'Master dark frame ( for -20C, 2s, bias-minus)'
+hdu.writeto('master_dark_-20C_2s.fits', overwrite=True)
+
+pixflat = masterdark.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat = np.median(pixflat) #medium value of pixel data
+medabs = np.median(np.abs(pixflat - medianofflat))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp = np.mean(pixflat)
+stdp = np.std(pixflat)
+print("Median pixel mean (ADU):", medianofflat)
+print("medium of absolute of pixel mean (ADU):", medabs)
+
+darkcurrent202s = medianofflat/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current (-20C2s):', darkcurrent202s)
+
+threshold = medianofflat + 10 * medabs #creates a threshold of any pixels abobe 10x the medium
+#threshold = meanp +5*stdp
+hotpixel = masterdark > threshold # hotpixels above threshold in just the mean
+
+numhotpixels = np.sum(hotpixel)
+print("Potential amount of Hot pixels:", numhotpixels)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold =  darkstack > threshold  #search for pixels above threshold
+commonpixels = np.sum(abovethreshold, axis=0) #sums them up per pixel per image so its an array
+allhot = commonpixels==5 #this is to use in scatter graph later
+hotpixels = np.sum(commonpixels==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels) 
+
+plt.figure()
+plt.imshow(masterdark, origin='lower', cmap='gray', vmin=0, vmax=threshold)
+plt.colorbar()
+plt.title('Master dark image')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdark, origin='lower', cmap='gray', vmin=0, vmax=threshold)
+y, x = np.where(allhot) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar()
+plt.title('Marked hot pixels')
+plt.show()
+\new cell
+
+#FLAT FRAME CALIBRATION
+from numpy.polynomial.legendre import Legendre
+
+flatimages = sorted(glob.glob("LED_flat_2s_*.fits")) #stacking the flats
+flats = [] #array for the flat
+
+for file in flatimages:
+    data = fits.getdata(file) #getting data 
+    calibrated = data - masterbias - masterdark #subtracting the masterbias and dark
+    flats.append(calibrated)
+
+flats = np.array(flats) #creating an array of the flat stack
+masterflat = np.median(flats, axis=0) #creating a master flat
+flatmed = np.median(masterflat, axis=0) #median of the flat
+
+x = np.arange(len(flatmed)) #range of the values of the median flat
+
+poly = Legendre.fit(x, flatmed, deg=5) #Legrande polynomial fit
+fit = poly(x) #scaled polynomial fit
+flatnorm = flatmed / fit #median of falt over the polynomal fit to create normalization
+
+median = np.median(flatnorm) #median of the flat normalization
+std = np.std(flatnorm) #standard deviation of the flat normalization 
+
+print("Median:", median)
+print("Standard Deviation:", std)
+
+hdu = fits.PrimaryHDU(masterflat) #creates file for masterbias
+hdu.header['COMMENT'] = 'Master flat frame (-18 C)' #titles it
+hdu.writeto('master_flat.fits', overwrite=True) #if rerun doesnt create new file just overwrites it 
+
+
+# plot
+plt.figure()
+plt.plot(flatmed, 'o', markersize=1, label="Flat") #plot of the polynomial against the data
+plt.plot(fit, label="Legendre Fit")
+plt.xlabel('Pixel Value')
+plt.ylabel('Counts')
+plt.title('Legrande Fit vs The Data')
+plt.legend()
+plt.show()
+
+plt.figure()
+plt.imshow(masterflat, origin='lower', cmap='gray') #displaying image, origins lower means zeros will match
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master flat')
+plt.show()
+
+plt.figure()
+plt.imshow(masterflat, origin='lower', cmap='gray', vmax=1.1, vmin=0.9) #displaying image, origins lower means zeros will match
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master flat')
+plt.show()
