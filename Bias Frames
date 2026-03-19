@@ -1,0 +1,322 @@
+import numpy as np
+import matplotlib.pyplot as plt
+%matplotlib inline
+import astropy.io as astro
+from astropy.io import fits
+import astroquery as query
+import photutils as phot
+\new cell
+
+#this is just opening the image and giving some basic statistics about the image, 
+#this is for -18.2
+image_file = 'bias_-18.2C_0010.fits'
+hdu_list = fits.open(image_file) #opening the fits file to see whats contained
+imagedata = hdu_list[0].data
+print('type of data=', type(imagedata)) #type of data in image
+print('shape of data=', imagedata.shape) #dimensions of image
+hdu_list.info() #information of fits
+hdu_list.close() #closing fit
+
+plt.imshow(imagedata, origin='lower', cmap='grey') #displaying image, origins lower means zeros will match
+plt.colorbar() 
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Bias Frame: -18.2 degrees') #the bias frame, hoping to not see anything.
+plt.show()
+
+
+print('Min:', np.min(imagedata))
+print('Max:', np.max(imagedata))
+print('Mean:', np.mean(imagedata))
+print('Standard deviation:', np.std(imagedata, ddof=1))
+\new cell 
+
+#Now I will stack 10 of them (the same temp)
+#to get the mean and standard devaition of the bias frames
+import glob #this is used to find all the bias frames with the same temp
+from astropy.stats import sigma_clip #helps with sigma clipping
+allfiles = sorted(glob.glob('bias_-18.2C_*.fits')) #sorted puts them in order
+biasframes1 = [] 
+for a in allfiles: 
+    with fits.open(a) as hdu:
+        biasframes1.append(hdu[0].data) 
+
+biasframes1 = np.array(biasframes1, dtype=np.float64) #gives biasframes1 the data
+print(biasframes1.shape, 'this is bias shape')
+meanforalldata = np.mean(biasframes1, axis=(1,2)) #this is xbar in sigma clipping
+stdsforalldata = np.std(biasframes1, axis=(1,2)) # this is sigma for sigma clipping
+
+averagepixvalue = np.mean(meanforalldata)
+print('mean bias level for -18.2', np.mean(meanforalldata))
+print('standard deviation for -18.2', np.std(meanforalldata))
+
+
+print("Std of first bias frame:", np.std(biasframes1[0]))
+print("Mean image std:", np.mean(np.std(biasframes1, axis=(1,2))))
+stdimage1 = np.mean(np.std(biasframes1, axis=(1,2)))
+#sigma clipping test for -18.2C
+
+x_bar = np.mean(meanforalldata)
+
+clipped = np.abs(meanforalldata - x_bar) <= 3 * stdsforalldata #any value above sigma*3 will be clipped
+
+clippedmeans = meanforalldata[clipped] #clipping the means for any issues
+
+#finding readout noise: 
+
+stdofimages = np.std(biasframes1, axis=0, ddof=1) #reading from each pixel 
+
+print("Std image shape:", stdofimages.shape) #shape should be x and y of image
+
+plt.imshow(stdofimages, origin='lower', cmap='gray') #shows the image
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Masterbias std (-18.2C)')
+plt.show()
+
+readoutnoise = np.mean(stdofimages) #calculating readout noise
+
+print("Read-out noise (ADU):", readoutnoise) #pixel noise in adu but to change to electrons, need gain. 
+
+#making bias master frame: 
+clipbiases = sigma_clip(biasframes1, sigma=3, axis=0)
+masterbias = np.mean(clipbiases, axis=0)
+
+print("Master bias mean (ADU):", np.mean(masterbias)) 
+print("Master bias std (ADU):", np.std(masterbias, ddof=1))
+
+hdu = fits.PrimaryHDU(masterbias) #creates file for masterbias
+hdu.header['COMMENT'] = 'Master bias frame (-18 C)' #titles it
+hdu.writeto('master_bias_-18.2C.fits', overwrite=True) #if rerun doesnt create new file just overwrites it 
+
+plt.imshow(masterbias, origin='lower', cmap='grey', vmax=241, vmin=238) #displaying image, origins lower means zeros will match
+plt.colorbar(label='(ADU)') 
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master Bias Frame: -18C degrees') #the bias frame, hoping to not see anything.
+plt.show()
+\new cell 
+
+
+allfiles = sorted(glob.glob('bias_-10.0C_*.fits')) #sorted puts them in order
+biasframes2 = [] 
+for a in allfiles: 
+    with fits.open(a) as hdu:
+        biasframes2.append(hdu[0].data) 
+
+biasframes2 = np.array(biasframes2, dtype=np.float64) #gives biasframes1 the data
+print(biasframes2.shape, 'this is bias shape')
+meanforalldata1 = np.mean(biasframes2, axis=(1,2))
+stdsforalldata1 = np.std(biasframes2, axis=(1,2))
+
+averagepixvalue1= np.mean(meanforalldata1)
+print('mean bias level for -10', np.mean(meanforalldata1))
+print('standard deviation for -10', np.std(meanforalldata1))
+
+
+print("Std of first bias frame:", np.std(biasframes2[0]))
+print("Mean image std:", np.mean(np.std(biasframes2, axis=(1,2))))
+stdimage2 = np.mean(np.std(biasframes2, axis=(1,2)))
+#finding readout noise: 
+
+stdofimages1 = np.std(biasframes2, axis=0, ddof=1) #reading from each pixel 
+
+print("Std image shape:", stdofimages1.shape) #shape should be x and y of image
+
+plt.imshow(stdofimages1, origin='lower', cmap='gray')
+plt.colorbar(label='Standard deviation (ADU)')
+plt.title('Pixel standard deviation (bias frames)')
+plt.show()
+
+readoutnoise1 = np.mean(stdofimages1)
+
+print("Read-out noise (ADU):", readoutnoise1) #pixel noise in adu but to change to electrons, need gain. 
+
+
+#making bias master frame: 
+clipbiases1 = sigma_clip(biasframes2, sigma=3, axis=0) #new sigma clipping method using sigma clipping function
+masterbias1 = np.mean(clipbiases1, axis=0)
+
+print("Master bias mean (ADU):", np.mean(masterbias1)) 
+print("Master bias std (ADU):", np.std(masterbias1, ddof=1))
+
+hdu = fits.PrimaryHDU(masterbias1) #creates file for masterbias
+hdu.header['COMMENT'] = 'Master bias frame (-10 C)' #titles it
+hdu.writeto('master_bias_-10C.fits', overwrite=True) #if rerun doesnt create new file just overwrites it 
+
+plt.imshow(masterbias1, origin='lower', cmap='grey', vmax=241, vmin=238) #displaying image, origins lower means zeros will match
+plt.colorbar(label='(ADU)') 
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master Bias Frame: -10C degrees') #the bias frame, hoping to not see anything.
+plt.show()
+\new cell 
+
+
+allfiles = sorted(glob.glob('bias_0C_*.fits')) #sorted puts them in order
+biasframes3 = [] 
+for a in allfiles: 
+    with fits.open(a) as hdu:
+        biasframes3.append(hdu[0].data) 
+
+biasframes3 = np.array(biasframes3, dtype=np.float64) #gives biasframes1 the data
+print(biasframes3.shape, 'this is bias shape')
+meanforalldata2 = np.mean(biasframes3, axis=(1,2))
+stdsforalldata2 = np.std(biasframes3, axis=(1,2))
+
+averagepixvalue2= np.mean(meanforalldata2)
+print('mean bias level for 0', np.mean(meanforalldata2))
+print('standard deviation for 0', np.std(meanforalldata2))
+
+
+print("Std of first bias frame:", np.std(biasframes3[0]))
+print("Mean image std:", np.mean(np.std(biasframes3, axis=(1,2))))
+stdimage3 = np.mean(np.std(biasframes3, axis=(1,2)))
+#finding readout noise: 
+
+# Standard deviation at each pixel (ADU)
+stdofimages2 = np.std(biasframes3, axis=0, ddof=1) #reading from each pixel 
+
+print("Std image shape:", stdofimages2.shape) #shape should be x and y of image
+
+plt.imshow(stdofimages2, origin='lower', cmap='gray')
+plt.colorbar(label='Standard deviation (ADU)')
+plt.title('Pixel standard deviation (bias frames)')
+plt.show()
+
+readoutnoise2 = np.mean(stdofimages2)
+
+print("Read-out noise (ADU):", readoutnoise2) #pixel noise in adu but to change to electrons, need gain. 
+
+#making bias master frame: 
+clipbiases2 = sigma_clip(biasframes3, sigma=3, axis=0)
+masterbias2 = np.mean(clipbiases2, axis=0)
+
+print("Master bias mean (ADU):", np.mean(masterbias2)) 
+print("Master bias std (ADU):", np.std(masterbias2, ddof=1))
+
+hdu = fits.PrimaryHDU(masterbias2) #creates file for masterbias
+hdu.header['COMMENT'] = 'Master bias frame (0 C)' #titles it
+hdu.writeto('master_bias_0C.fits', overwrite=True) #if rerun doesnt create new file just overwrites it 
+
+plt.imshow(masterbias2, origin='lower', cmap='grey', vmax=241, vmin=238) #displaying image, origins lower means zeros will match
+plt.colorbar(label='(ADU)') 
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master Bias Frame: 0C degrees') #the bias frame, hoping to not see anything.
+plt.show()
+\new cell 
+
+allfiles = sorted(glob.glob('bias_10C_*.fits')) #sorted puts them in order
+biasframes4 = [] 
+for a in allfiles: 
+    with fits.open(a) as hdu:
+        biasframes4.append(hdu[0].data) 
+
+biasframes4 = np.array(biasframes4, dtype=np.float64) #gives biasframes1 the data
+print(biasframes4.shape, 'this is bias shape')
+meanforalldata3 = np.mean(biasframes4, axis=(1,2))
+stdsforalldata3 = np.std(biasframes4, axis=(1,2))
+
+averagepixvalue3= np.mean(meanforalldata3)
+print('mean bias level for 10', np.mean(meanforalldata3))
+print('standard deviation for 10', np.std(meanforalldata3))
+
+
+print("Std of first bias frame:", np.std(biasframes4[0]))
+print("Mean image std:", np.mean(np.std(biasframes4, axis=(1,2))))
+stdimage4 = np.mean(np.std(biasframes4, axis=(1,2)))
+
+#finding readout noise: 
+
+# Standard deviation at each pixel (ADU)
+stdofimages3 = np.std(biasframes4, axis=0, ddof=1) #reading from each pixel 
+
+print("Std image shape:", stdofimages3.shape) #shape should be x and y of image
+
+plt.imshow(stdofimages3, origin='lower', cmap='gray')
+plt.colorbar(label='Standard deviation (ADU)')
+plt.title('Pixel standard deviation (bias frames) (10C)')
+plt.show()
+
+readoutnoise3 = np.mean(stdofimages3)
+
+print("Read-out noise (ADU):", readoutnoise3) #pixel noise in adu but to change to electrons, need gain. 
+
+#making bias master frame: 
+clipbiases3 = sigma_clip(biasframes4, sigma=3, axis=0)
+masterbias3 = np.mean(clipbiases3, axis=0)
+
+print("Master bias mean (ADU):", np.mean(masterbias3)) 
+print("Master bias std (ADU):", np.std(masterbias3, ddof=1))
+
+hdu = fits.PrimaryHDU(masterbias3) #creates file for masterbias
+hdu.header['COMMENT'] = 'Master bias frame (10 C)' #titles it
+hdu.writeto('master_bias_10C.fits', overwrite=True) #if rerun doesnt create new file just overwrites it 
+
+plt.imshow(masterbias3, origin='lower', cmap='grey', vmax=241, vmin=238) #displaying image, origins lower means zeros will match
+plt.colorbar(label='(ADU)') 
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master Bias Frame: 10C degrees') #the bias frame, hoping to not see anything.
+plt.show()
+\ new cell
+
+
+plt.figure() 
+plt.hist(biasframes1[0].flatten(), bins=100) #creating the histrogram distibutions of the flatterned data of the bias frames
+plt.xlabel("ADU")
+plt.ylabel("Number of pixels")
+plt.title("Pixel value distribution (-18.2°C bias)")
+plt.show()
+plt.figure()
+plt.hist(biasframes2[0].flatten(), bins=100)  #creating the histrogram distibutions of the flatterned data of the bias frames
+plt.xlabel("ADU")
+plt.ylabel("Number of pixels")
+plt.title("Pixel value distribution (-10°C bias)")
+plt.show()
+plt.figure()
+plt.hist(biasframes3[0].flatten(), bins=100)  #creating the histrogram distibutions of the flatterned data of the bias frames
+plt.xlabel("ADU")
+plt.ylabel("Number of pixels")
+plt.title("Pixel value distribution (0°C bias)")
+plt.show()
+plt.figure()
+plt.hist(biasframes4[0].flatten(), bins=100)  #creating the histrogram distibutions of the flatterned data of the bias frames
+plt.xlabel("ADU")
+plt.ylabel("Number of pixels")
+plt.title("Pixel value distribution (10°C bias)")
+plt.show()
+\new cell
+
+Temp = np.array([-18.2, -10, 0, 10]) #temperatures measured at
+readout = np.array([readoutnoise, readoutnoise1, readoutnoise2, readoutnoise3 ]) #each readout noise
+post = [-18.2, -10, 0, 10] #where the labels should be positions
+labels = ["-18.2", "-10", "0", "10"] # temperature labels 
+plt.figure() #plotting figure to compare temperature to readout noise
+plt.plot(Temp, readout, '-o', color='r', label='readout noise')
+plt.xlabel('Temperature (C)')
+plt.ylabel('readout noise (ADU)')
+plt.title('Comparision of Readout Noise vs Temperature for the Bias Frames')
+plt.xticks(post, labels) # labels of x-axis
+plt.legend()
+plt.show()
+\new cell 
+
+Temp1 = np.array([-18.2, -10, 0, 10])  #temperatures 
+average = np.array([averagepixvalue, averagepixvalue1, averagepixvalue2,averagepixvalue3]) #average pixel value
+post1 = [-18.2, -10, 0, 10]
+stdss = np.array([stdimage1, stdimage2, stdimage3, stdimage4]) #standard deviation for error bars on pixel values
+labels1 = ["-18.2", "-10", "0", "10"]
+plt.figure()
+plt.errorbar(Temp1, average, yerr=stdss, fmt='-o', color='g', capsize=5) #the error bars and pixel value points will be plotted
+plt.xlabel('Temperature (C)')
+plt.ylabel('Average Pixel Values Per Bias stack')
+plt.title('Comparision Of Average Pixel Value For Each Bias Stack Vs Temperatures')
+plt.xticks(post1, labels1) #x-axis labels
+plt.show()
+\new cell
+
+
+
