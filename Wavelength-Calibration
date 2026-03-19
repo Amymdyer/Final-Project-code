@@ -1,0 +1,227 @@
+import numpy as np
+#%matplotlib notebook
+import matplotlib.pyplot as plt
+import astropy.io as astro
+from astropy.io import fits
+import astroquery as query
+import photutils as phot
+from astropy.stats import sigma_clip
+\new cell 
+
+#BIAS FRAMES: 
+
+allfiles = sorted(glob.glob('bias_-17C_*.fits')) #sorted puts them in order
+biasframes1 = [] 
+for a in allfiles: 
+    with fits.open(a) as hdu:
+        biasframes1.append(hdu[0].data) 
+
+biasframes1 = np.array(biasframes1, dtype=np.float64) #gives biasframes1 the data
+print(biasframes1.shape, 'this is bias shape')
+meanforalldata = np.mean(biasframes1, axis=(1,2)) #this is xbar in sigma clipping
+stdsforalldata = np.std(biasframes1, axis=(1,2)) # this is sigma for sigma clipping
+
+print('mean bias level for -17', np.mean(meanforalldata))
+print('standard deviation for -17', np.std(meanforalldata))
+print("Std of first bias frame:", np.std(biasframes1[0]))
+print("Mean image std:", np.mean(np.std(biasframes1, axis=(1,2))))
+
+#making bias master frame: 
+clipbiases = sigma_clip(biasframes1, sigma=3, axis=0) #new sigma clipping method using sigma clipping function
+masterbias = np.mean(clipbiases, axis=0)
+
+print("Master bias mean (ADU):", np.mean(masterbias)) 
+print("Master bias std (ADU):", np.std(masterbias, ddof=1)) 
+
+hdu = fits.PrimaryHDU(masterbias) #creates file for master bias
+hdu.header['COMMENT'] = 'Master bias frame (-17 C)' # titles it
+hdu.writeto('master_bias_-17C.fits', overwrite=True) if rerun doesnt create new file just overwrites it 
+\new cell
+
+#DARK FRAMES
+darks17_30 = sorted(glob.glob('dark_-17C_30s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack = []
+for f in darks17_30:   
+    with fits.open(f) as hdul:
+        darks17_30 = hdul[0].data.astype(np.float64) #changing to 64bit
+    darkstack.append(darks17_30 - masterbias)
+
+darkstack = np.array(darkstack) #creating the array
+print('shape of dark: ',darkstack.shape) #checking right shape
+
+dark17_30clip = sigma_clip(darkstack, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark = np.mean(dark17_30clip, axis=0).data #creating master dark frame
+
+masterdmean = np.mean(masterdark) 
+masterdstd = np.std(masterdark)
+print('Master dark mean (ADU): ', masterdmean)
+print('Master dark std (ADU): ', masterdstd)
+
+hdu = fits.PrimaryHDU(masterdark) #filinf masterdark
+hdu.header['COMMENT'] = 'Master dark frame ( for -17C, 30s, bias-minus)'
+hdu.writeto('master_dark_-17C_30s.fits', overwrite=True)
+
+pixflat = masterdark.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat = np.median(pixflat) #medium value of pixel data
+medabs = np.median(np.abs(pixflat - medianofflat))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp = np.mean(pixflat)
+stdp = np.std(pixflat)
+print("Median pixel mean (ADU):", medianofflat)
+print("medium of absolute of pixel mean (ADU):", medabs)
+
+darkcurrent1730s = medianofflat/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current (17C30s):', darkcurrent1730s)
+
+threshold = medianofflat + 10 * medabs #creates a threshold of any pixels abobe 10x the medium
+#threshold = meanp +5*stdp
+hotpixel = masterdark > threshold # hotpixels above threshold in just the mean
+
+numhotpixels = np.sum(hotpixel)
+print("Potential amount of Hot pixels:", numhotpixels)
+
+#common hot pixels throughout all 5 of the images: 
+abovethreshold =  darkstack > threshold  #search for pixels above threshold
+commonpixels = np.sum(abovethreshold, axis=0) #sums them up per pixel per image so its an array
+allhot = commonpixels==5 #this is to use in scatter graph later
+hotpixels = np.sum(commonpixels==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels) 
+
+plt.figure()
+plt.imshow(masterdark, origin='lower', cmap='gray', vmin=0, vmax=threshold)
+plt.colorbar()
+plt.title('Master dark image')
+plt.show()
+\new cell
+
+#WAVELENGTH-CALIBRATION
+#opening the Neon image
+
+image_file = 'Test Ne_0005.fits'
+hdu_list = fits.open(image_file) #opening the fits file to see whats contained
+imagedata = hdu_list[0].data
+imagedata =imagedata.astype(float)
+masterbias = masterbias.astype(float)
+arcneon = (imagedata - masterbias - masterdark) #need to devide by flat
+print('type of data=', type(imagedata)) #type of data in image
+print('shape of data=', imagedata.shape) #dimensions of image
+hdu_list.info() #information of fits
+hdu_list.close() #closing fit
+
+plt.imshow(arcneon, origin='lower', cmap='gray', vmin=0.1, vmax=10) #found vmax, 10 works best
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Neon') #neon arc lamp used 
+plt.show()
+print('Min:', np.min(imagedata))
+print('Max:', np.max(imagedata))
+print('Mean:', np.mean(imagedata))
+print('Standard deviation:', np.std(imagedata, ddof=1))
+\new cell
+
+
+#SLICES OF NEON SPECTRUM
+y = 1100 #slicing through neon lines at y=this
+line = arcneon[y, :] #will create a line slice across the image at this y value
+
+xpixelno = np.arange(len(line)) #creates x pixel postion value number
+
+plt.figure(figsize=(10,4)) #fits the image 
+plt.plot(xpixelno, line) 
+plt.xlabel("Pixel (x)")
+plt.ylabel("Intensity")
+plt.xlim(left=0)
+plt.ylim(bottom=0)
+plt.title("Neon Arc Spectrum")
+plt.show()
+rangeofslice = np.mean(arcneon[y-15:y+15, :], axis=0) #takes a range of 30 rows
+#then makes the mean of those rows
+
+plt.figure(figsize=(10,5))
+plt.plot(rangeofslice)
+plt.xlabel("Pixel (x)")
+plt.ylabel("Intensity")
+plt.xlim(left=0)
+plt.ylim(bottom=0)
+plt.title("Averaged peaks for Neon Spectrum")
+plt.show()
+\new cell 
+
+#MATCHING X-PIXELS TO WAVELENGTH - WAVELENGTH CALIBRATION
+#from the N.O.T website - known neon spectrum values, citation is in the report.
+fromweb = np.array([5944,6029,6074,6096,6143,6163,6217,6266,6334,6382,
+                   6402, 6506, 6532,6598,6678,6717,6929, 7032, 7173, 7245, 7438, 7488])
+
+matchx = np.array([608,654,678,692,718,729,731,760,788,826,864,923,937,975, 1019,1041,1158,1215, 1293, 1332, 1438, 1465 ])
+#using average peaks
+coeffs = np.polyfit(matchx, fromweb, 2) #fits polynom 2nd order to get the best fit for pixel-wavelength solution
+wave = np.poly1d(coeffs) #wavelength values
+
+wavelengthmatch = wave(xpixelno) #evaluates the pixels at the wavelength to match pixels to wavelength
+plt.figure(figsize=(8,5))
+plt.plot(wavelengthmatch, rangeofslice) #wavelength match to the pixel slit
+plt.xlabel("Wavelength (Angstrom)")
+plt.ylabel("Intensity")
+plt.title("Wavelength match calibrated Neon spectrum")
+plt.show()
+
+#test calulation off dispersion by zooming in using matplotlib notebook tool and comparing the two
+pixel1 = 608
+lambda1 = 5944   
+
+pixel2 = 1215
+lambda2 = 7032  
+
+dispersion = (lambda2 - lambda1) / (pixel2 - pixel1)
+print("Dispersion (angs/pixel):", dispersion)
+\new cell 
+
+#GAUSSIAN FIT for 1 peak
+def gaussian(Ylam, I0, Y0, sigma, bac):
+    return I0* np.exp(-(Ylam - Y0)**2 / (2 * sigma**2)) + bac #gaussian fit for spectroscopy
+xmin = 1205     #peak region
+xmax = 1225
+
+xdata = xpixelno[xmin:xmax]  #x values for pixel positions between xmin-xmax
+ydata = rangeofslice[xmin:xmax] #goes through the range of slices
+
+plt.figure()
+plt.plot(xdata, ydata) #singles out the peak chosen
+plt.xlabel('Wavelength (Angstroms)')
+plt.ylabel('Intensity')
+plt.title("Single Peak Region")
+plt.show() 
+
+
+I0est = np.max(ydata) - np.min(ydata) #max - min intensity estimet (amplitude)
+Y0est = xdata[np.argmax(ydata)] 
+sigest = 2 #estimating sigma value
+backest = np.min(ydata) #estimating background
+
+p0 = [I0est, Y0est, sigest, backest] #parameters
+
+popt, pcov = curve_fit(gaussian, xdata, ydata, p0=p0) #gaussian fit
+
+I0f, Y0f, sigf, backf = popt #fits
+
+FWHM = 2.355 * abs(sigf) #FWHM equation
+
+print("Peak center (pixels):", Y0f) #centre of the peak
+print("Sigma:", sigf) #value of sigma
+print("FWHM (pixels):", FWHM)  #FWHM to show spectral resolution of pixels
+
+smoothg = np.linspace(xmin, xmax, 1000) #1000 points between xmin and xmax for smooth gaussian
+
+plt.figure(figsize=(8,5)) 
+plt.plot(xdata, ydata, label="Peak region data")
+plt.plot(smoothg, gaussian(smoothg, *popt), 'g--', label="Gaussian Fit")
+plt.xlabel('Wavelength(Angstroms)')
+plt.ylabel('Intensity')
+plt.legend()
+plt.title("Gaussian Fit to Arc Line")
+plt.show()
+
+
