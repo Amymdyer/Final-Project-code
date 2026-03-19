@@ -1,0 +1,873 @@
+import numpy as np
+import matplotlib.pyplot as plt
+%matplotlib inline
+import astropy.io as astro
+from astropy.io import fits
+import astroquery as query
+import photutils as phot
+from astropy.stats import sigma_clip
+\new cell
+
+#NEW MASTER BIAS AT NEW TEMPERATURE -17C
+import glob #this is used to find all the bias frames with the same temp 
+
+allfiles = sorted(glob.glob('bias_-17C_*.fits')) #sorted puts them in order
+biasframes1 = [] 
+for a in allfiles: 
+    with fits.open(a) as hdu:
+        biasframes1.append(hdu[0].data) 
+
+biasframes1 = np.array(biasframes1) #gives biasframes1 the data
+print(biasframes1.shape, 'this is bias shape')
+meanforalldata = np.mean(biasframes1, axis=(1,2)) #this is xbar in sigma clipping
+stdsforalldata = np.std(biasframes1, axis=(1,2)) # this is sigma for sigma clipping
+#sigma clipping test for -17.C
+
+
+clipped = sigma_clip(meanforalldata, sigma=3, axis=0)
+clippedmeans = clipped.compressed()  #would remove any image where its mean isnt below 3std
+
+print('sigma clipping bias mean:', clippedmeans)
+print("Rejected frame means:", meanforalldata[clipped.mask])  #seeing if any frame is rejected
+    
+
+#making bias master frame: 
+clipbiases = sigma_clip(biasframes1, sigma=3, axis=0)
+masterbias = np.mean(clipbiases, axis=0)
+
+print("Master bias mean (ADU):", np.mean(masterbias)) 
+print("Master bias std (ADU):", np.std(masterbias, ddof=1))
+
+hdu = fits.PrimaryHDU(masterbias) #creates file for masterbias
+hdu.header['COMMENT'] = 'Master bias frame (-17 C)' #titles it
+hdu.writeto('master_bias_-17C.fits', overwrite=True) #if rerun doesnt create new file just overwrites it 
+
+plt.imshow(masterbias, origin='lower', cmap='grey') #displaying image, origins lower means zeros will match
+plt.colorbar() 
+plt.title('Master Bias Frame: -17 degrees') #the bias frame, hoping to not see anything.
+plt.show()
+\new cell
+
+#DARK FRAME CALIBRATION
+onedarkimage = 'dark_-17C_30s_0000.fits'
+hdu1 = fits.open(onedarkimage) #opening the fits file to see whats contained
+imagedata1 = hdu1[0].data
+print('type of data=', type(imagedata1)) #type of data in image
+print('shape of data=', imagedata1.shape) #dimensions of image
+hdu1.info() #information of fits
+hdu1.close() #closing fit
+
+imagedata1 = imagedata1.astype(float) #changing the image  to the same thing 
+masterbias = masterbias.astype(float) 
+imagedata1 = imagedata1-masterbias
+
+darkmed = np.median(imagedata1)
+darkcurrent = darkmed/30 #data/time
+print('darkcurrent: ',darkcurrent)
+
+plt.imshow(imagedata1, origin='lower', cmap='gray', vmax=240, vmin=150) #displaying image, origins lower means zeros will match
+plt.colorbar() 
+plt.title('One dark frame: with set Vmax Vmin') 
+plt.show()
+
+
+print("Mean:", np.mean(imagedata1))
+print("Median:", np.median(imagedata1))
+\new cell
+
+import glob
+
+darks17_30 = sorted(glob.glob('dark_-17C_30s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack = []
+for f in darks17_30:   
+    with fits.open(f) as hdul:
+        darks17_30 = hdul[0].data.astype(np.float64) #changing to 64bit
+    darkstack.append(darks17_30 - masterbias)
+
+darkstack = np.array(darkstack) #creating the array
+print('shape of dark: ',darkstack.shape) #checking right shape
+
+dark17_30clip = sigma_clip(darkstack, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark = np.mean(dark17_30clip, axis=0).data #creating master dark frame
+
+masterdmean = np.mean(masterdark) 
+masterdstd = np.std(masterdark)
+print('Master dark mean (ADU): ', masterdmean)
+print('Master dark std (ADU): ', masterdstd)
+
+hdu = fits.PrimaryHDU(masterdark) #filinf masterdark
+hdu.header['COMMENT'] = 'Master dark frame ( for -17C, 30s, bias-minus)'
+hdu.writeto('master_dark_-17C_30s.fits', overwrite=True)
+
+pixflat = masterdark.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat = np.median(pixflat) #medium value of pixel data
+medabs = np.median(np.abs(pixflat - medianofflat))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp = np.mean(pixflat)
+stdp = np.std(pixflat)
+print("Median pixel mean (ADU):", medianofflat)
+print("medium of absolute of pixel mean (ADU):", medabs)
+
+darkcurrent1730s = medianofflat/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current (17C30s):', darkcurrent1730s)
+threshold = medianofflat + 10 * medabs #creates a threshold of any pixels abobe 10x the medium
+hotpixel = masterdark > threshold # hotpixels above threshold in just the mean
+
+numhotpixels = np.sum(hotpixel)
+print("Potential amount of Hot pixels:", numhotpixels)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold =  darkstack > threshold  #search for pixels above threshold
+commonpixels = np.sum(abovethreshold, axis=0) #sums them up per pixel per image so its an array
+allhot = commonpixels==5 #this is to use in scatter graph later
+hotpixels = np.sum(commonpixels==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels) 
+
+plt.figure()
+plt.imshow(masterdark, origin='lower', cmap='gray', vmin=0, vmax=threshold)
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master dark image (-17C, 30s)')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdark, origin='lower', cmap='gray', vmin=0, vmax=threshold)
+y, x = np.where(allhot) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Marked hot pixels (-17C, 30s)')
+plt.show()
+\new cell
+
+#distribution of the pixels with added threshold in
+
+pixels = masterdark.flatten() #flatten makes it 1D array instead of 2D
+
+plt.figure(figsize=(8,5))
+plt.hist(pixels, bins=200, log=True) #creating this historgram of distribution
+plt.axvline(threshold, color='red', linestyle='--', label='Hot pixel threshold')
+plt.xlabel('Pixel Value (ADU)')
+plt.ylabel('Number of Pixels (log scale)')
+plt.title('Distribution of Pixel Values in Master Dark')
+plt.legend()
+plt.show()
+
+#confirming numbers match with previous found values
+pixsoverthreshold = np.sum(pixels > threshold) 
+print("Pixels above threshold:", pixsoverthreshold) 
+commonval = masterdark[allhot] 
+print("Persistent hot pixels:", commonval.size)
+\new cell
+
+darks17_10 = sorted(glob.glob('dark_-17C_10s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack1 = []
+for f in darks17_10:   
+    with fits.open(f) as hdul1:
+        darks17_10 = hdul1[0].data.astype(np.float64) #changing to 64bit
+    darkstack1.append(darks17_10 - masterbias) #taking master bias off stacked image
+
+
+darkstack1 = np.array(darkstack1) #creating the array
+print('shape of dark: ',darkstack1.shape) #checking right shape
+
+dark17_10clip = sigma_clip(darkstack1, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark1710 = np.mean(dark17_10clip, axis=0).data #creating master dark frame
+
+masterdmean1 = np.mean(masterdark1710) 
+masterdstd1 = np.std(masterdark1710)
+print('Master dark mean (ADU): ', masterdmean1)
+print('Master dark std (ADU): ', masterdstd1)
+
+hdu1 = fits.PrimaryHDU(masterdark1710) #filing masterdark
+hdu1.header['COMMENT'] = 'Master dark frame ( for -17C, 10s, bias subtracked)'
+hdu1.writeto('master_dark_-17C_10s.fits', overwrite=True)
+
+pixflat1 = masterdark1710.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat1 = np.median(pixflat1) #medium value of pixel data
+medabs1 = np.median(np.abs(pixflat1 - medianofflat1))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp1 = np.mean(pixflat1)
+stdp1 = np.std(pixflat1)
+print("Median pixel mean (ADU):", medianofflat1)
+print("medium of absolute of pixel mean (ADU):", medabs1)
+
+darkcurrent1710s = medianofflat1/10 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current:', darkcurrent1710s)
+threshold1 = medianofflat1 + 10 * medabs1 #creates a threshold of any pixels abobe 10x the medium
+hotpixel1 = masterdark1710 > threshold1 # hotpixels above threshold in just the mean
+
+numhotpixels1 = np.sum(hotpixel1)
+print("Potential amount of Hot pixels:", numhotpixels1)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold1 =  darkstack1 > threshold1  #search for pixels above threshold
+commonpixels1 = np.sum(abovethreshold1, axis=0) #sums them up per pixel per image so its an array
+allhot1 = commonpixels1==5 #this is to use in scatter graph later
+hotpixels1 = np.sum(commonpixels1==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels1) 
+
+plt.figure()
+plt.imshow(masterdark1710, origin='lower', cmap='gray', vmin=0, vmax=threshold1)
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master dark image (-17 10s)')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdark1710, origin='lower', cmap='gray', vmin=0, vmax=threshold1)
+y, x = np.where(allhot1) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Marked hot pixels (-17C 10s)')
+plt.show()
+
+#histogram plot
+pixels1 = masterdark1710.flatten() #flatten makes it 1D array instead of 2D
+
+plt.figure(figsize=(8,5))
+plt.hist(pixels1, bins=200, log=True) 
+plt.axvline(threshold1, color='red', linestyle='--', label='Hot pixel threshold')
+plt.xlabel('Pixel Value (ADU)')
+plt.ylabel('Number of Pixels (log scale)')
+plt.title('Distribution of Pixel Values in Master Dark (-17C, 10s)')
+plt.legend()
+plt.show()
+
+#confirming numbers match with previous found values
+pixsoverthreshold1 = np.sum(pixels1 > threshold1) 
+print("Pixels above threshold:", pixsoverthreshold1) 
+commonval1  = masterdark1710[allhot1] 
+print("Persistent hot pixels:", commonval1.size)
+\new cell
+
+darks17_5 = sorted(glob.glob('dark_-17C_5s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack2 = []
+for f in darks17_5:   
+    with fits.open(f) as hdul2:
+        darks17_5 = hdul2[0].data.astype(np.float64) #changing to 64bit
+    darkstack2.append(darks17_5 - masterbias) #taking master bias off stacked image
+
+
+darkstack2 = np.array(darkstack2) #creating the array
+print('shape of dark: ',darkstack2.shape) #checking right shape
+
+dark17_5clip = sigma_clip(darkstack2, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark175 = np.mean(dark17_5clip, axis=0).data #creating master dark frame
+
+masterdmean2 = np.mean(masterdark175) 
+masterdstd2 = np.std(masterdark175)
+print('Master dark mean (ADU): ', masterdmean2)
+print('Master dark std (ADU): ', masterdstd2)
+
+hdu2 = fits.PrimaryHDU(masterdark175) #filing masterdark
+hdu2.header['COMMENT'] = 'Master dark frame ( for -17C, 5s, bias minus)'
+hdu2.writeto('master_dark_-17C_5s.fits', overwrite=True)
+
+pixflat2 = masterdark175.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat2 = np.median(pixflat2) #medium value of pixel data
+medabs2 = np.median(np.abs(pixflat2 - medianofflat2))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp2 = np.mean(pixflat2)
+stdp2 = np.std(pixflat2)
+print("Median pixel mean (ADU):", medianofflat2)
+print("medium of absolute of pixel mean (ADU):", medabs2)
+
+darkcurrent175s = medianofflat1/5 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current:', darkcurrent175s)
+threshold2 = medianofflat2 + 10 * medabs2 #creates a threshold of any pixels abobe 10x the medium
+hotpixel2 = masterdark175 > threshold2 # hotpixels above threshold in just the mean
+
+numhotpixels2 = np.sum(hotpixel2)
+print("Potential amount of Hot pixels:", numhotpixels2)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold2 =  darkstack2 > threshold2  #search for pixels above threshold
+commonpixels2 = np.sum(abovethreshold2, axis=0) #sums them up per pixel per image so its an array
+allhot2 = commonpixels2==5 #this is to use in scatter graph later
+hotpixels2 = np.sum(commonpixels2==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels2) 
+
+plt.figure()
+plt.imshow(masterdark175, origin='lower', cmap='gray', vmin=0, vmax=threshold2)
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master dark image (-17C 5s)')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdark175, origin='lower', cmap='gray', vmin=0, vmax=threshold2)
+y, x = np.where(allhot2) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Marked hot pixels (-17C 5s)')
+plt.show()
+
+#histogram plot
+pixels2 = masterdark175.flatten() #flatten makes it 1D array instead of 2D
+
+plt.figure(figsize=(8,5))
+plt.hist(pixels2, bins=200, log=True) 
+plt.axvline(threshold2, color='red', linestyle='--', label='Hot pixel threshold')
+plt.xlabel('Pixel Value (ADU)')
+plt.ylabel('Number of Pixels (log scale)')
+plt.title('Distribution of Pixel Values in Master Dark (-17C, 5s)')
+plt.legend()
+plt.show()
+
+#confirming numbers match with previous found values
+pixsoverthreshold2 = np.sum(pixels2 > threshold2) 
+print("Pixels above threshold:", pixsoverthreshold2) 
+commonval2  = masterdark1710[allhot2] 
+print("Persistent hot pixels:", commonval2.size)
+\new cell 
+darks17_1 = sorted(glob.glob('dark_-17C_1s_*fits')) #stacking the 5 dark images at this temp
+darkstack3 = []
+for f in darks17_1:   
+    with fits.open(f) as hdul3:
+        darks17_1 = hdul1[0].data.astype(np.float64) #changing to 64bit
+    darkstack3.append(darks17_1 - masterbias) #taking master bias off stacked image
+
+
+darkstack3 = np.array(darkstack3) #creating the array
+print('shape of dark: ',darkstack3.shape) #checking right shape
+
+dark17_1clip = sigma_clip(darkstack3, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark171 = np.mean(dark17_1clip, axis=0).data #creating master dark frame
+masterdmean3 = np.mean(masterdark171) 
+masterdstd3 = np.std(masterdark171)
+print('Master dark mean (ADU): ', masterdmean3)
+print('Master dark std (ADU): ', masterdstd3)
+
+hdu3 = fits.PrimaryHDU(masterdark171) #filing masterdark
+hdu3.header['COMMENT'] = 'Master dark frame ( for -17C, 1s, bias minus)'
+hdu3.writeto('master_dark_-17C_1s.fits', overwrite=True)
+
+pixflat3 = masterdark171.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat3 = np.median(pixflat3) #medium value of pixel data
+medabs3 = np.median(np.abs(pixflat3 - medianofflat3))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp3 = np.mean(pixflat3)
+stdp3 = np.std(pixflat3)
+print("Median pixel mean (ADU):", medianofflat3)
+print("medium of absolute of pixel mean (ADU):", medabs3)
+
+darkcurrent171s = medianofflat3/1 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current:', darkcurrent171s)
+threshold3 = medianofflat3 + 10 * medabs3 #creates a threshold of any pixels abobe 10x the medium
+hotpixel3 = masterdark171 > threshold3 # hotpixels above threshold in just the mean
+
+numhotpixels3 = np.sum(hotpixel3)
+print("Potential amount of Hot pixels:", numhotpixels3)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold3 =  darkstack3 > threshold3  #search for pixels above threshold
+commonpixels3 = np.sum(abovethreshold3, axis=0) #sums them up per pixel per image so its an array
+allhot3 = commonpixels3==5 #this is to use in scatter graph later
+hotpixels3 = np.sum(commonpixels3==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels3) 
+
+plt.figure()
+plt.imshow(masterdark171, origin='lower', cmap='gray', vmin=0, vmax=threshold3)
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master dark image (-17C 1s)')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdark171, origin='lower', cmap='gray', vmin=0, vmax=threshold3)
+y, x = np.where(allhot3) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Marked hot pixels (-17C 1s)')
+plt.show()
+
+#histogram plot
+pixels3 = masterdark171.flatten() #flatten makes it 1D array instead of 2D
+
+plt.figure(figsize=(8,5))
+plt.hist(pixels3, bins=200, log=True) 
+plt.axvline(threshold3, color='red', linestyle='--', label='Hot pixel threshold')
+plt.xlabel('Pixel Value (ADU)')
+plt.ylabel('Number of Pixels (log scale)')
+plt.title('Distribution of Pixel Values in Master Dark (-17C, 1s)')
+plt.legend()
+plt.show()
+
+#confirming numbers match with previous found values
+pixsoverthreshold3 = np.sum(pixels3 > threshold3) 
+print("Pixels above threshold:", pixsoverthreshold3) 
+commonval3  = masterdark171[allhot3] 
+print("Persistent hot pixels:", commonval3.size)
+\new cell 
+
+darks17_2 = sorted(glob.glob('dark_-17C_2s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack7 = []
+for f in darks17_2:   
+    with fits.open(f) as hdul7:
+        darks17_2 = hdul7[0].data.astype(np.float64) #changing to 64bit
+    darkstack7.append(darks17_2 - masterbias) #taking master bias off stacked image
+
+
+darkstack7 = np.array(darkstack7) #creating the array
+print('shape of dark: ',darkstack7.shape) #checking right shape
+
+dark17_2clip = sigma_clip(darkstack7, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark172 = np.mean(dark17_2clip, axis=0).data #creating master dark frame
+masterdmean7 = np.mean(masterdark172) 
+masterdstd7 = np.std(masterdark172)
+print('Master dark mean (ADU): ', masterdmean7)
+print('Master dark std (ADU): ', masterdstd7)
+
+hdu3 = fits.PrimaryHDU(masterdark172) #filing masterdark
+hdu3.header['COMMENT'] = 'Master dark frame ( for -17C, 2s, bias minus)'
+hdu3.writeto('master_dark_-17C_2s.fits', overwrite=True)
+
+pixflat7 = masterdark172.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat7 = np.median(pixflat7) #medium value of pixel data
+medabs7 = np.median(np.abs(pixflat7 - medianofflat7))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp7 = np.mean(pixflat7)
+stdp7 = np.std(pixflat7)
+print("Median pixel mean (ADU):", medianofflat7)
+print("medium of absolute of pixel mean (ADU):", medabs7)
+
+darkcurrent172s = medianofflat7/2 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current:', darkcurrent172s)
+threshold7 = medianofflat7 + 10 * medabs7 #creates a threshold of any pixels abobe 10x the medium
+hotpixel7 = masterdark172 > threshold7 # hotpixels above threshold in just the mean
+
+numhotpixels7 = np.sum(hotpixel7)
+print("Potential amount of Hot pixels:", numhotpixels7)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold7 =  darkstack7 > threshold7  #search for pixels above threshold
+commonpixels7 = np.sum(abovethreshold7, axis=0) #sums them up per pixel per image so its an array
+allhot7 = commonpixels7==5 #this is to use in scatter graph later
+hotpixels7 = np.sum(commonpixels7==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels7) 
+
+plt.figure()
+plt.imshow(masterdark172, origin='lower', cmap='gray', vmin=0, vmax=threshold7)
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master dark image (-17C 2s)')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdark172, origin='lower', cmap='gray', vmin=0, vmax=threshold7)
+y, x = np.where(allhot7) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Marked hot pixels (-17C 2s)')
+plt.show()
+
+#histogram plot
+pixels7 = masterdark172.flatten() #flatten makes it 1D array instead of 2D
+
+plt.figure(figsize=(8,5))
+plt.hist(pixels7, bins=200, log=True) 
+plt.axvline(threshold7, color='red', linestyle='--', label='Hot pixel threshold')
+plt.xlabel('Pixel Value (ADU)')
+plt.ylabel('Number of Pixels (log scale)')
+plt.title('Distribution of Pixel Values in Master Dark (-17C, 2s)')
+plt.legend()
+plt.show()
+
+#confirming numbers match with previous found values
+pixsoverthreshold7 = np.sum(pixels7 > threshold7) 
+print("Pixels above threshold:", pixsoverthreshold7) 
+commonval7 = masterdark171[allhot7] 
+print("Persistent hot pixels:", commonval7.size)
+\new cell
+
+commonhot = [hotpixels3, hotpixels7, hotpixels2, hotpixels1, hotpixels] #common hot pixels
+esthot = [numhotpixels3, numhotpixels7, numhotpixels2, numhotpixels1, numhotpixels] #estimated hot pixels
+times = [1, 2, 5, 10, 30] #exposure times
+
+plt.figure()
+plt.plot(times, commonhot, marker='o', c='red', label='common hot pixels') 
+plt.plot(times, esthot, marker='o', c='blue', label='potential hot pixels')
+plt.xlabel('exposure time (seconds)')
+plt.ylabel('amount of hot pixels')
+plt.title('Time verus Amount of hot pixels present')
+plt.legend()
+plt.show()
+\new cell 
+
+#new graph with out 1s exposure 
+comhot = [hotpixels7, hotpixels2, hotpixels1, hotpixels]
+esth = [numhotpixels7, numhotpixels2, numhotpixels1, numhotpixels]
+time =[2, 5, 10, 30]
+plt.figure()
+plt.plot(time, comhot, 'r', marker='o', label='common hot pixels')
+plt.plot(time, esth, 'b', marker='o', label='potential hot pixels')
+plt.title('Time verus Amount of Hot Pixels Present (with 1s exposure removed)')
+plt.ylabel('Amount of hot pixels')
+plt.xlabel('Exposure Time (Seconds)')
+plt.show()
+\new cell 
+
+#trying to find hot pixels common in all images in the same location and seeing how they change over time 
+allcommonpixs = (allhot3 & allhot7 & allhot2 & allhot1 & allhot) #getting all the common hot pixels
+
+ycoords, xcoords = np.where(allcommonpixs) #finding where all the coords are 
+
+print("Number of pixels common to all exposures:", len(xcoords)) #printing the amount of common pixels in all exposures
+selected_pixels = list(zip(ycoords[:8], xcoords[:8])) #puts the pair of coords into a list of the first 10 coords 
+print(selected_pixels) #shows the selected pixels
+    
+plt.figure()
+
+for (y, x) in selected_pixels:
+    
+    values = np.array([
+        masterdark171[y, x],
+        masterdark172[y, x],
+        masterdark175[y, x],
+        masterdark1710[y, x],
+        masterdark[y, x]
+    ]) #makes points at each value relating to the x and y coords of the common hot pixels in each frame
+    
+    plt.plot(times, values, marker='o', label=f'({x},{y})') #labels with given x and y values
+
+plt.xlabel('Exposure time (seconds)')
+plt.ylabel('Pixel value (ADU)') #counts
+plt.title('Common Hot Pixels: Counts vs Exposure Time')
+plt.legend(loc='upper left')
+plt.show()
+\new cell 
+
+darksm10_30 = sorted(glob.glob('dark_-10C_30s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack4 = []
+for f in darksm10_30:   
+    with fits.open(f) as hdul4:
+        darksm10_30 = hdul4[0].data.astype(np.float64) #changing to 64bit
+    darkstack4.append(darksm10_30 - masterbias) #taking master bias off stacked image
+
+
+darkstack4 = np.array(darkstack4) #creating the array
+print('shape of dark: ',darkstack4.shape) #checking right shape
+
+darkm10_30clip = sigma_clip(darkstack4, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdarkm1030 = np.mean(darkm10_30clip, axis=0).data #creating master dark frame
+masterdmean4 = np.mean(masterdarkm1030) 
+masterdstd4 = np.std(masterdarkm1030)
+print('Master dark mean (ADU): ', masterdmean4)
+print('Master dark std (ADU): ', masterdstd4)
+
+hdu3 = fits.PrimaryHDU(masterdarkm1030) #filing masterdark
+hdu3.header['COMMENT'] = 'Master dark frame ( for -10C, 30s, bias minus)'
+hdu3.writeto('master_dark_-10C_30s.fits', overwrite=True)
+
+pixflat4 = masterdarkm1030.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat4 = np.median(pixflat4) #medium value of pixel data
+medabs4 = np.median(np.abs(pixflat4 - medianofflat4))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp4 = np.mean(pixflat4)
+stdp4 = np.std(pixflat4)
+print("Median pixel mean (ADU):", medianofflat4)
+print("medium of absolute of pixel mean (ADU):", medabs4)
+
+darkcurrentm1030s = medianofflat4/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current:', darkcurrentm1030s)
+threshold4 = medianofflat4 + 10 * medabs4 #creates a threshold of any pixels abobe 10x the medium
+hotpixel4 = masterdarkm1030 > threshold4 # hotpixels above threshold in just the mean
+
+numhotpixels4 = np.sum(hotpixel4)
+print("Potential amount of Hot pixels:", numhotpixels4)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold4 =  darkstack4 > threshold4  #search for pixels above threshold
+commonpixels4 = np.sum(abovethreshold4, axis=0) #sums them up per pixel per image so its an array
+allhot4 = commonpixels4==5 #this is to use in scatter graph later
+hotpixels4 = np.sum(commonpixels4==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels4) 
+
+plt.figure()
+plt.imshow(masterdarkm1030, origin='lower', cmap='gray', vmin=0, vmax=threshold4)
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master dark image (-10C 30s)')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdarkm1030, origin='lower', cmap='gray', vmin=0, vmax=threshold4)
+y, x = np.where(allhot4) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Marked hot pixels (-10C 30s)')
+plt.show()
+
+#histogram plot
+pixels4 = masterdarkm1030.flatten() #flatten makes it 1D array instead of 2D
+
+plt.figure(figsize=(8,5))
+plt.hist(pixels4, bins=200, log=True) 
+plt.axvline(threshold4, color='red', linestyle='--', label='Hot pixel threshold')
+plt.xlabel('Pixel Value (ADU)')
+plt.ylabel('Number of Pixels (log scale)')
+plt.title('Distribution of Pixel Values in Master Dark (-10C, 30s)')
+plt.legend()
+plt.show()
+
+#confirming numbers match with previous found values
+pixsoverthreshold4 = np.sum(pixels4 > threshold4) 
+print("Pixels above threshold:", pixsoverthreshold4) 
+commonval4 = masterdarkm1030[allhot4] 
+print("Persistent hot pixels:", commonval4.size)
+\new cell 
+
+darks0_30 = sorted(glob.glob('dark_0C_30s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack5 = []
+for f in darks0_30:   
+    with fits.open(f) as hdul5:
+        darks0_30 = hdul5[0].data.astype(np.float64) #changing to 64bit
+    darkstack5.append(darks0_30 - masterbias) #taking master bias off stacked image
+
+
+darkstack5 = np.array(darkstack5) #creating the array
+print('shape of dark: ',darkstack5.shape) #checking right shape
+
+dark0_30clip = sigma_clip(darkstack5, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark030 = np.mean(dark0_30clip, axis=0).data #creating master dark frame
+masterdmean5 = np.mean(masterdark030) 
+masterdstd5 = np.std(masterdark030)
+print('Master dark mean (ADU): ', masterdmean5)
+print('Master dark std (ADU): ', masterdstd5)
+
+hdu3 = fits.PrimaryHDU(masterdark030) #filing masterdark
+hdu3.header['COMMENT'] = 'Master dark frame ( for 0C, 30s, bias minus)'
+hdu3.writeto('master_dark_0C_30s.fits', overwrite=True)
+
+pixflat5 = masterdark030.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat5 = np.median(pixflat5) #medium value of pixel data
+medabs5 = np.median(np.abs(pixflat5 - medianofflat5))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp5 = np.mean(pixflat5)
+stdp5 = np.std(pixflat5)
+print("Median pixel mean (ADU):", medianofflat5)
+print("medium of absolute of pixel mean (ADU):", medabs5)
+
+darkcurrent030s = np.median(masterdark030)/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current:', darkcurrent030s)
+print('test dark current', np.mean(masterdark030)/30)
+print('test dark current medium pixel', medianofflat5/30)
+print('test dark mean pixel', meanp5/30)
+threshold5 = medianofflat5 + 10 * medabs5 #creates a threshold of any pixels abobe 10x the medium
+hotpixel5 = masterdark030 > threshold5 # hotpixels above threshold in just the mean
+
+numhotpixels5 = np.sum(hotpixel5)
+print("Potential amount of Hot pixels:", numhotpixels5)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold5 =  darkstack5 > threshold5  #search for pixels above threshold
+commonpixels5 = np.sum(abovethreshold5, axis=0) #sums them up per pixel per image so its an array
+allhot5 = commonpixels5==5 #this is to use in scatter graph later
+hotpixels5 = np.sum(commonpixels5==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels5) 
+
+plt.figure()
+plt.imshow(masterdark030, origin='lower', cmap='gray', vmin=0, vmax=threshold5)
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master dark image (0C 30s)')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdark030, origin='lower', cmap='gray', vmin=0, vmax=threshold5)
+y, x = np.where(allhot4) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Marked hot pixels (0C 30s)')
+plt.show()
+
+#histogram plot
+pixels5 = masterdark030.flatten() #flatten makes it 1D array instead of 2D
+
+plt.figure(figsize=(8,5))
+plt.hist(pixels5, bins=200, log=True) 
+plt.axvline(threshold5, color='red', linestyle='--', label='Hot pixel threshold')
+plt.xlabel('Pixel Value (ADU)')
+plt.ylabel('Number of Pixels (log scale)')
+plt.title('Distribution of Pixel Values in Master Dark (0C, 30s)')
+plt.legend()
+plt.show()
+
+#confirming numbers match with previous found values
+pixsoverthreshold5 = np.sum(pixels5 > threshold5) 
+print("Pixels above threshold:", pixsoverthreshold5) 
+commonval5 = masterdarkm1030[allhot5] 
+print("Persistent hot pixels:", commonval5.size)
+\new cell
+
+darks10_30 = sorted(glob.glob('dark_10C_30s_*fits')) #stacking the 5 dark images at this temp
+
+darkstack6 = []
+for f in darks10_30:   
+    with fits.open(f) as hdul6:
+        darks10_30 = hdul6[0].data.astype(np.float64) #changing to 64bit
+    darkstack6.append(darks10_30 - masterbias) #taking master bias off stacked image
+
+
+darkstack6 = np.array(darkstack6) #creating the array
+print('shape of dark: ',darkstack6.shape) #checking right shape
+
+dark10_30clip = sigma_clip(darkstack6, sigma=3, axis=0, maxiters=5) #sigma clipping
+masterdark1030 = np.mean(dark10_30clip, axis=0).data #creating master dark frame
+masterdmean6 = np.mean(masterdark1030) 
+masterdstd6 = np.std(masterdark1030)
+print('Master dark mean (ADU): ', masterdmean6)
+print('Master dark std (ADU): ', masterdstd6)
+
+hdu4 = fits.PrimaryHDU(masterdark1030) #filing masterdark
+hdu4.header['COMMENT'] = 'Master dark frame ( for 10C, 30s, bias minus)'
+hdu4.writeto('master_dark_10C_30s.fits', overwrite=True)
+
+pixflat6 = masterdark1030.flatten() #flattening array of pixels to find data of hot pixels present
+
+medianofflat6 = np.median(pixflat6) #medium value of pixel data
+medabs6 = np.median(np.abs(pixflat6 - medianofflat6))  #absolute of the mean - medium (average) - then the most common of these values 
+meanp6 = np.mean(pixflat6)
+stdp6 = np.std(pixflat6)
+print("Median pixel mean (ADU):", medianofflat6)
+print("medium of absolute of pixel mean (ADU):", medabs6)
+
+darkcurrent1030s = medianofflat6/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+print('Dark current:', darkcurrent1030s)
+threshold6 = medianofflat6 + 10 * medabs6 #creates a threshold of any pixels abobe 10x the medium
+hotpixel6 = masterdark1030 > threshold6 # hotpixels above threshold in just the mean
+
+numhotpixels6 = np.sum(hotpixel6)
+print("Potential amount of Hot pixels:", numhotpixels6)
+
+#common hot pixels throughout all 5 of the images: 
+
+abovethreshold6 =  darkstack6 > threshold6  #search for pixels above threshold
+commonpixels6 = np.sum(abovethreshold6, axis=0) #sums them up per pixel per image so its an array
+allhot6 = commonpixels6==5 #this is to use in scatter graph later
+hotpixels6 = np.sum(commonpixels6==5) #sums up the common pixels in each image
+
+print('common hot pixels in all 5 images: ', hotpixels6) 
+
+plt.figure()
+plt.imshow(masterdark1030, origin='lower', cmap='gray', vmin=0, vmax=threshold6)
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Master dark image (10C 30s)')
+plt.show()
+
+plt.figure()
+plt.imshow(masterdark1030, origin='lower', cmap='gray', vmin=0, vmax=threshold6)
+y, x = np.where(allhot4) #identifies where all hot pixels are
+plt.scatter(x,y, s=0.1, c='red')
+plt.colorbar(label='(ADU)')
+plt.xlabel('x pixel value')
+plt.ylabel('y pixel value')
+plt.title('Marked hot pixels (10C 30s)')
+plt.show()
+
+#histogram plot
+pixels6 = masterdark1030.flatten() #flatten makes it 1D array instead of 2D
+
+plt.figure(figsize=(8,5))
+plt.hist(pixels6, bins=200, log=True) 
+plt.axvline(threshold6, color='red', linestyle='--', label='Hot pixel threshold')
+plt.xlabel('Pixel Value (ADU)')
+plt.ylabel('Number of Pixels (log scale)')
+plt.title('Distribution of Pixel Values in Master Dark (10C, 30s)')
+plt.legend()
+plt.show()
+
+#confirming numbers match with previous found values
+pixsoverthreshold6 = np.sum(pixels6 > threshold6) 
+print("Pixels above threshold:", pixsoverthreshold6) 
+commonval6 = masterdarkm1030[allhot6] 
+print("Persistent hot pixels:", commonval6.size)
+\new cell
+
+commonhot1 = [hotpixels, hotpixels4, hotpixels5, hotpixels6] #common hot pixels for the temperature dependence
+esthot1 = [numhotpixels, numhotpixels4, numhotpixels5, numhotpixels6]
+temp = [-17, -10, 0, 10]
+plt.figure()
+plt.plot(temp, commonhot1, marker='o', c='red', label='common hot pixels')
+plt.plot(temp, esthot1, marker='o', c='blue', label='potential hot pixels')
+plt.xlabel('Temperature')
+plt.ylabel('amount of hot pixels')
+plt.title('Temp verus Amount of hot pixels present')
+plt.legend()
+plt.show()
+\new cell 
+
+
+allcommonpixs1 = (allhot6 & allhot5 & allhot4 & allhot) #getting all the common hot pixels
+
+ycoords1, xcoords1 = np.where(allcommonpixs1) #finding where all the coords are 
+
+print("Number of pixels common to all exposures:", len(xcoords1)) #printing the amount of common pixels in all exposures
+selected_pixels1 = list(zip(ycoords1[:10], xcoords1[:10])) #puts the pair of coords into a list of the first 10 coords 
+print(selected_pixels1) #shows the selected pixels
+    
+plt.figure()
+
+for (y1, x1) in selected_pixels1:
+    
+    values1 = np.array([
+        masterdark[y1, x1],
+        masterdarkm1030[y1, x1],
+        masterdark030[y1, x1],
+        masterdark1030[y1, x1]
+    ]) #makes points at each value relating to the x and y coords for common hot pixels in each frame
+    
+    plt.plot(temp, values1, marker='o', label=f'({x1},{y1})') #labels with given x and y values
+
+plt.xlabel('Temperature (C)')
+plt.ylabel('Pixel value (ADU)') #counts
+plt.title('Common Hot Pixels: Counts vs Temp')
+plt.legend(loc='upper left')
+plt.show()
+\new cell 
+
+
+
