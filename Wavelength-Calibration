@@ -180,6 +180,7 @@ print("Dispersion (angs/pixel):", dispersion)
 \new cell 
 
 #GAUSSIAN FIT for 1 peak
+from scipy.optimize import curve_fit
 def gaussian(Ylam, I0, Y0, sigma, bac):
     return I0* np.exp(-(Ylam - Y0)**2 / (2 * sigma**2)) + bac #gaussian fit for spectroscopy
 xmin = 1205     #peak region
@@ -223,5 +224,49 @@ plt.ylabel('Intensity')
 plt.legend()
 plt.title("Gaussian Fit to Arc Line")
 plt.show()
+\new cell
+
+#FINDING THE RESOLVING POWER, DISPERSION, RESOLUTION ETC.
+#Finding the resolving power for the spectograph
+from scipy.signal import find_peaks #this finds the peaks in my wavelength calibrated plot
+from scipy.signal import peak_widths
+
+threshold = np.mean(rangeofslice) + 3*np.std(rangeofslice) #creating threshold for height value in find_peaks to reduce noise
+peaks, properties = find_peaks(rangeofslice, height=threshold, distance=10)
+
+width = peak_widths(rangeofslice, peaks, rel_height=0.5) #helps to find the FWHM mean of peaks
+widthspeaks = width[0] #widths of peaks
+
+dispersion1= np.gradient(wavelengthmatch) #dispersion is dlambda/dx so gradient finds this
+dispersionf = np.mean(dispersion1)
+print('dispersion', dispersionf)
+FWHM1 = widthspeaks*dispersionf #without fitting a gaussian this calculates the FWHM as the width
+spectralres = np.mean(FWHM1) #smallest distance they can ve resolved
+fFWHM = np.mean(FWHM1)
+stdspec = np.std(FWHM1)/np.sqrt(len(FWHM1)) #finding std error of mean: std/sqrt(Number of N)
+print('FWHM', fFWHM)
+print('delta lambda', spectralres)
+print('std of delta lambda', stdspec)
+peaksshown = wavelengthmatch[peaks] #peak wavelength values
+
+R = peaksshown/FWHM1 #resolving power
+resolving = np.mean(R)
+stdres = np.std(R)/np.sqrt(len(R)) #std error is calculated: std/sqrt(N)
+print('average resolving power:', resolving)
+print('std of res', stdres)
+
+leftpeaks = width[2] #left of the peaks
+rightpeaks = width[3] #right of the peaks
+
+plt.figure(figsize=(8,5)) #identifing peaks
+plt.plot(wavelengthmatch, rangeofslice) 
+plt.plot(peaksshown, rangeofslice[peaks], marker="*", linestyle='None', markersize=9,
+color='purple', markerfacecolor='blue') #chooses where to plot the markers at the top of the peaks
+plt.xlabel("Wavelength (Angstroms)")
+plt.ylabel("Intensity")
+plt.title("FWHM Of Spectra Lines")
+plt.show()
+
+
 
 
