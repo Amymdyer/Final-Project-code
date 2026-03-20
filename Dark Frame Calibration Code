@@ -61,10 +61,6 @@ imagedata1 = imagedata1.astype(float) #changing the image  to the same thing
 masterbias = masterbias.astype(float) 
 imagedata1 = imagedata1-masterbias
 
-darkmed = np.median(imagedata1)
-darkcurrent = darkmed/30 #data/time
-print('darkcurrent: ',darkcurrent)
-
 plt.imshow(imagedata1, origin='lower', cmap='gray', vmax=240, vmin=150) #displaying image, origins lower means zeros will match
 plt.colorbar() 
 plt.title('One dark frame: with set Vmax Vmin') 
@@ -109,7 +105,7 @@ stdp = np.std(pixflat)
 print("Median pixel mean (ADU):", medianofflat)
 print("medium of absolute of pixel mean (ADU):", medabs)
 
-darkcurrent1730s = medianofflat/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+darkcurrent1730s = meanp/30 #darkcurrent (mean/exposurerate) calculated so I can compare over different time and temp
 print('Dark current (17C30s):', darkcurrent1730s)
 threshold = medianofflat + 10 * medabs #creates a threshold of any pixels abobe 10x the medium
 hotpixel = masterdark > threshold # hotpixels above threshold in just the mean
@@ -198,7 +194,7 @@ stdp1 = np.std(pixflat1)
 print("Median pixel mean (ADU):", medianofflat1)
 print("medium of absolute of pixel mean (ADU):", medabs1)
 
-darkcurrent1710s = medianofflat1/10 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+darkcurrent1710s = meanp1/10 #darkcurrent (mean/exposurerate) calculated so I can compare over different time and temp
 print('Dark current:', darkcurrent1710s)
 threshold1 = medianofflat1 + 10 * medabs1 #creates a threshold of any pixels abobe 10x the medium
 hotpixel1 = masterdark1710 > threshold1 # hotpixels above threshold in just the mean
@@ -285,7 +281,7 @@ stdp2 = np.std(pixflat2)
 print("Median pixel mean (ADU):", medianofflat2)
 print("medium of absolute of pixel mean (ADU):", medabs2)
 
-darkcurrent175s = medianofflat1/5 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+darkcurrent175s = meanp2/5 #darkcurrent (mean/exposurerate) calculated so I can compare over different time and temp
 print('Dark current:', darkcurrent175s)
 threshold2 = medianofflat2 + 10 * medabs2 #creates a threshold of any pixels abobe 10x the medium
 hotpixel2 = masterdark175 > threshold2 # hotpixels above threshold in just the mean
@@ -338,11 +334,13 @@ print("Pixels above threshold:", pixsoverthreshold2)
 commonval2  = masterdark1710[allhot2] 
 print("Persistent hot pixels:", commonval2.size)
 \new cell 
+
+
 darks17_1 = sorted(glob.glob('dark_-17C_1s_*fits')) #stacking the 5 dark images at this temp
 darkstack3 = []
 for f in darks17_1:   
     with fits.open(f) as hdul3:
-        darks17_1 = hdul1[0].data.astype(np.float64) #changing to 64bit
+        darks17_1 = hdul3[0].data.astype(np.float64) #changing to 64bit
     darkstack3.append(darks17_1 - masterbias) #taking master bias off stacked image
 
 
@@ -369,7 +367,7 @@ stdp3 = np.std(pixflat3)
 print("Median pixel mean (ADU):", medianofflat3)
 print("medium of absolute of pixel mean (ADU):", medabs3)
 
-darkcurrent171s = medianofflat3/1 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+darkcurrent171s = meanp3/1 #darkcurrent (mean/exposurerate) calculated so I can compare over different time and temp
 print('Dark current:', darkcurrent171s)
 threshold3 = medianofflat3 + 10 * medabs3 #creates a threshold of any pixels abobe 10x the medium
 hotpixel3 = masterdark171 > threshold3 # hotpixels above threshold in just the mean
@@ -455,7 +453,7 @@ stdp7 = np.std(pixflat7)
 print("Median pixel mean (ADU):", medianofflat7)
 print("medium of absolute of pixel mean (ADU):", medabs7)
 
-darkcurrent172s = medianofflat7/2 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+darkcurrent172s = meanp7/2 #darkcurrent (mean/exposurerate) calculated so I can compare over different time and temp
 print('Dark current:', darkcurrent172s)
 threshold7 = medianofflat7 + 10 * medabs7 #creates a threshold of any pixels abobe 10x the medium
 hotpixel7 = masterdark172 > threshold7 # hotpixels above threshold in just the mean
@@ -523,18 +521,6 @@ plt.legend()
 plt.show()
 \new cell 
 
-#new graph with out 1s exposure 
-comhot = [hotpixels7, hotpixels2, hotpixels1, hotpixels]
-esth = [numhotpixels7, numhotpixels2, numhotpixels1, numhotpixels]
-time =[2, 5, 10, 30]
-plt.figure()
-plt.plot(time, comhot, 'r', marker='o', label='common hot pixels')
-plt.plot(time, esth, 'b', marker='o', label='potential hot pixels')
-plt.title('Time verus Amount of Hot Pixels Present (with 1s exposure removed)')
-plt.ylabel('Amount of hot pixels')
-plt.xlabel('Exposure Time (Seconds)')
-plt.show()
-\new cell 
 
 #trying to find hot pixels common in all images in the same location and seeing how they change over time 
 allcommonpixs = (allhot3 & allhot7 & allhot2 & allhot1 & allhot) #getting all the common hot pixels
@@ -598,7 +584,7 @@ stdp4 = np.std(pixflat4)
 print("Median pixel mean (ADU):", medianofflat4)
 print("medium of absolute of pixel mean (ADU):", medabs4)
 
-darkcurrentm1030s = medianofflat4/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+darkcurrentm1030s = meanp4/30 #darkcurrent (mean/exposurerate) calculated so I can compare over different time and temp
 print('Dark current:', darkcurrentm1030s)
 threshold4 = medianofflat4 + 10 * medabs4 #creates a threshold of any pixels abobe 10x the medium
 hotpixel4 = masterdarkm1030 > threshold4 # hotpixels above threshold in just the mean
@@ -684,11 +670,8 @@ stdp5 = np.std(pixflat5)
 print("Median pixel mean (ADU):", medianofflat5)
 print("medium of absolute of pixel mean (ADU):", medabs5)
 
-darkcurrent030s = np.median(masterdark030)/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+darkcurrent030s = meanp5/30 #darkcurrent (mean/exposurerate) calculated so I can compare over different time and temp
 print('Dark current:', darkcurrent030s)
-print('test dark current', np.mean(masterdark030)/30)
-print('test dark current medium pixel', medianofflat5/30)
-print('test dark mean pixel', meanp5/30)
 threshold5 = medianofflat5 + 10 * medabs5 #creates a threshold of any pixels abobe 10x the medium
 hotpixel5 = masterdark030 > threshold5 # hotpixels above threshold in just the mean
 
@@ -773,7 +756,7 @@ stdp6 = np.std(pixflat6)
 print("Median pixel mean (ADU):", medianofflat6)
 print("medium of absolute of pixel mean (ADU):", medabs6)
 
-darkcurrent1030s = medianofflat6/30 #darkcurrent (medium/exposurerate) calculated so I can compare over different time and temp
+darkcurrent1030s = meanp6/30 #darkcurrent (mean/exposurerate) calculated so I can compare over different time and temp
 print('Dark current:', darkcurrent1030s)
 threshold6 = medianofflat6 + 10 * medabs6 #creates a threshold of any pixels abobe 10x the medium
 hotpixel6 = masterdark1030 > threshold6 # hotpixels above threshold in just the mean
@@ -869,5 +852,18 @@ plt.legend(loc='upper left')
 plt.show()
 \new cell 
 
+#Plotting dark current vs temp
+darkcurrentsfortemp = np.array([darkcurrent1730s, darkcurrentm1030s,darkcurrent030s, darkcurrent1030s])
+fordarktemp = np.array([-17, -10, 0, 10])
+
+plt.figure()
+plt.plot(fordarktemp, darkcurrentsfortemp, '-o', label='dark current for temperature')
+plt.xlabel('Temperature (C)')
+plt.ylabel('Dark Current')
+plt.title('Dark Current vs Temperature')
+plt.legend()
+plt.show()
+
+print(darkcurrentsfortemp) 
 
 
